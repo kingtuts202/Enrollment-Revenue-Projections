@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TNS Multi-Period Enrollment & Revenue Planner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <style>
+    :root {
+      --bg: #f4f6fa; --card:#ffffff; --text:#1f2a44; --muted:#6c7a96; --accent:#2b7cff; --border:#d5dbea;
+    }
+    body { font-family: Arial, Helvetica, sans-serif; margin: 20px; background: var(--bg); color: var(--text); }
+    h1 { margin: 0 0 6px; }
+    .muted { color: var(--muted); }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 14px 0; }
+    .row { display: grid; gap: 14px; }
+    @media (min-width: 900px) { .row.cols-2 { grid-template-columns: 1fr 1fr; } .row.cols-3{ grid-template-columns: 1fr 1fr 1fr; } .row.cols-4{ grid-template-columns: repeat(4,1fr);} }
+    label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
+    input[type="number"], input[type="text"] { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+    input[type="range"] { width: 100%; }
+    .stat { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: #fbfcff; }
+    .stat .k { font-size: 12px; color: var(--muted); }
+    .stat .v { font-weight: 700; margin-top: 4px; font-size: 18px; }
+    .badge { display:inline-block; padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid var(--border); background:#fbfcff; color:var(--muted); }
+    .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:10px; border:1px solid var(--border); background:#fbfcff; cursor:pointer; }
+    .btn:hover { border-color:#b9c3da; }
+    .danger { color:#c0392b; }
+    .ok { color:#0a8a4d; }
+    .period { position: relative; }
+    .period h3 { margin: 0 0 8px; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; }
+    .small { font-size: 12px; color: var(--muted); }
+    .flex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .barWrap { height: 10px; background: #eef2fb; border-radius: 999px; overflow: hidden; border:1px solid var(--border); }
+    .bar { height: 100%; background: linear-gradient(90deg, var(--accent), #64a5ff); width: 0%; }
+    .totals { display:grid; gap:14px; }
+    @media (min-width:900px){ .totals { grid-template-columns: repeat(4, 1fr); } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>TNS Multi-Period Enrollment & Revenue Planner</h1>
+  <div class="muted">Adjust assumptions and each period’s counts. Totals annualize by the months you assign to each period.</div>
+
+  <!-- Global settings -->
+  <div class="card">
+    <h2>Global Assumptions</h2>
+    <div class="row cols-4">
+      <div>
+        <label>Full-Time Tuition ($)</label>
+        <input id="tuitionFull" type="number" value="15500" min="0" step="100">
+      </div>
+      <div>
+        <label>Homeschool Per Class ($)</label>
+        <input id="hsClass" type="number" value="1500" min="0" step="50">
+      </div>
+      <div>
+        <label>Target Full-Pay Students (FPE)</label>
+        <input id="targetFPE" type="number" value="20" min="0" step="1">
+      </div>
+      <div>
+        <label>School Year Length (months)</label>
+        <input id="yearMonths" type="number" value="10" min="1" step="0.5">
+      </div>
+    </div>
+  </div>
+
+  <!-- Periods container -->
+  <div id="periods"></div>
+
+  <div class="actions">
+    <button class="btn" id="addPeriod">+ Add Period</button>
+    <button class="btn" id="reset">Reset to 3 Periods</button>
+    <span class="badge" id="monthsBadge"></span>
+  </div>
+
+  <!-- Summary -->
+  <div class="card">
+    <h2>Year Summary</h2>
+    <div class="totals">
+      <div class="stat"><div class="k">Annualized Revenue</div><div class="v" id="sumRevenue">$0</div></div>
+      <div class="stat"><div class="k">Annualized FPE</div><div class="v" id="sumFPE">0.00</div></div>
+      <div class="stat"><div class="k">Gap to Target (FPE)</div><div class="v" id="gapFPE">0.00</div></div>
+      <div class="stat"><div class="k">Gap to Target ($)</div><div class="v" id="gapRevenue">$0</div></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div>
+        <div class="small">Full-Pay Equivalents Progress</div>
+        <div class="barWrap"><div class="bar" id="fpeBar"></div></div>
+      </div>
+    </div>
+    <div class="small" style="margin-top:8px">FPE (Full-Pay Equivalents) = Total Revenue ÷ Full-Time Tuition. Annualization uses each period’s months ÷ year length.</div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const $ = sel => document.querySelector(sel);
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+
+  // Elements
+  const tuitionFull = $('#tuitionFull');
+  const hsClass = $('#hsClass');
+  const targetFPE = $('#targetFPE');
+  const yearMonths = $('#yearMonths');
+  const periodsEl = $('#periods');
+  const addPeriodBtn = $('#addPeriod');
+  const resetBtn = $('#reset');
+  const monthsBadge = $('#monthsBadge');
+  const sumRevenueEl = $('#sumRevenue');
+  const sumFPEEl = $('#sumFPE');
+  const gapFPEEl = $('#gapFPE');
+  const gapRevenueEl = $('#gapRevenue');
+  const fpeBar = $('#fpeBar');
+
+  // State
+  let periods = [
+    { id: uid(), name: 'Oct 1 → Dec 31', months: 4, fullPay: 10, aidCount: 1, aidPct: 60, hs1: 1, hs2: 0 },
+    { id: uid(), name: 'Jan 1 → Mar 31', months: 3, fullPay: 12, aidCount: 1, aidPct: 65, hs1: 2, hs2: 1 },
+    { id: uid(), name: 'Apr 1 → Jun 15', months: 3, fullPay: 14, aidCount: 1, aidPct: 65, hs1: 1, hs2: 2 },
+  ];
+
+  function uid(){ return Math.random().toString(36).slice(2,9); }
+
+  function render(){
+    periodsEl.innerHTML = '';
+    periods.forEach((p, idx) => {
+      const card = document.createElement('div');
+      card.className = 'card period';
+      card.innerHTML = `
+        <h3>Period ${idx+1}: <input type="text" value="${escapeHTML(p.name)}" data-key="name" style="width: 280px; padding:6px 10px; border:1px solid var(--border); border-radius:8px;"></h3>
+        <div class="row cols-4">
+          <div>
+            <label>Months in Period</label>
+            <input type="number" min="0" step="0.5" value="${p.months}" data-key="months">
+          </div>
+          <div>
+            <label>Full-Time (Full Pay) — count</label>
+            <input type="number" min="0" step="1" value="${p.fullPay}" data-key="fullPay">
+          </div>
+          <div>
+            <label>Full-Time (Aid) — count</label>
+            <input type="number" min="0" step="1" value="${p.aidCount}" data-key="aidCount">
+          </div>
+          <div>
+            <label>Avg % Paid by Aid Students: <span class="muted">${p.aidPct}%</span></label>
+            <input type="range" min="0" max="100" step="5" value="${p.aidPct}" data-key="aidPct">
+          </div>
+        </div>
+        <div class="row cols-3" style="margin-top:10px">
+          <div>
+            <label>Homeschoolers (1 class)</label>
+            <input type="number" min="0" step="1" value="${p.hs1}" data-key="hs1">
+          </div>
+          <div>
+            <label>Homeschoolers (2 classes)</label>
+            <input type="number" min="0" step="1" value="${p.hs2}" data-key="hs2">
+          </div>
+          <div class="actions" style="align-items:flex-end; justify-content:flex-end">
+            <button class="btn" data-action="duplicate">Duplicate</button>
+            <button class="btn" data-action="remove">Remove</button>
+          </div>
+        </div>
+        <div class="row cols-3" style="margin-top:12px">
+          <div class="stat"><div class="k">Period Revenue</div><div class="v" data-out="rev">$0</div></div>
+          <div class="stat"><div class="k">Period FPE (snapshot)</div><div class="v" data-out="fpe">0.00</div></div>
+          <div class="stat"><div class="k">Weighted Revenue (year)</div><div class="v" data-out="wrev">$0</div></div>
+        </div>
+      `;
+      // attach listeners
+      card.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('input', () => {
+          const key = inp.dataset.key;
+          let val = inp.type === 'number' ? Number(inp.value) : inp.value;
+          // bounds/sanity
+          if (key === 'months' && val < 0) val = 0;
+          if (key === 'aidPct'){ val = Math.min(100, Math.max(0, Number(inp.value))); }
+          periods[idx][key] = val;
+          update(); // live update totals
+        });
+      });
+      // duplicate/remove
+      card.querySelector('[data-action="duplicate"]').addEventListener('click', ()=>{
+        const clone = JSON.parse(JSON.stringify(periods[idx]));
+        clone.id = uid(); clone.name = clone.name + ' (copy)';
+        periods.splice(idx+1, 0, clone);
+        render(); update();
+      });
+      card.querySelector('[data-action="remove"]').addEventListener('click', ()=>{
+        if (periods.length <= 1) return;
+        periods.splice(idx,1);
+        render(); update();
+      });
+
+      periodsEl.appendChild(card);
+    });
+
+    // After rendering cards, compute and fill the per-period stats
+    update();
+  }
+
+  function update(){
+    const tuition = Number(tuitionFull.value)||0;
+    const hsRate = Number(hsClass.value)||0;
+    const target = Number(targetFPE.value)||0;
+    const yearLen = Number(yearMonths.value)||1;
+
+    let monthsTotal = 0;
+    let sumWeightedRevenue = 0;
+    let sumWeightedFPE = 0;
+
+    // compute each period
+    $$('#periods .period').forEach((card, i) => {
+      const p = periods[i];
+      const aidNet = (p.aidPct/100) * tuition;
+      const revenueFT = p.fullPay * tuition + p.aidCount * aidNet;
+      const revenueHS = p.hs1 * hsRate + p.hs2 * 2 * hsRate;
+      const revenue = revenueFT + revenueHS;
+      const fpe = tuition > 0 ? revenue / tuition : 0;
+
+      const weight = (Number(p.months)||0) / yearLen;
+      const weightedRevenue = revenue * weight;
+      const weightedFPE = fpe * weight;
+
+      monthsTotal += (Number(p.months)||0);
+      sumWeightedRevenue += weightedRevenue;
+      sumWeightedFPE += weightedFPE;
+
+      // fill outputs
+      card.querySelector('[data-out="rev"]').textContent = currency(revenue);
+      card.querySelector('[data-out="fpe"]').textContent = fpe.toFixed(2);
+      card.querySelector('[data-out="wrev"]').textContent = currency(Math.round(weightedRevenue));
+    });
+
+    // Totals & gaps
+    monthsBadge.textContent = `Period months total: ${monthsTotal} / Year length: ${yearLen}` +
+      (monthsTotal === yearLen ? '' : ' — adjust to match for accurate totals');
+
+    sumRevenueEl.textContent = currency(Math.round(sumWeightedRevenue));
+    sumFPEEl.textContent = sumWeightedFPE.toFixed(2);
+
+    const gapFPE = Math.max(0, target - sumWeightedFPE);
+    const gapRevenue = Math.max(0, target * (Number(tuitionFull.value)||0) - sumWeightedRevenue);
+    gapFPEEl.textContent = gapFPE.toFixed(2);
+    gapRevenueEl.textContent = currency(Math.round(gapRevenue));
+
+    // progress bar
+    const pct = target > 0 ? Math.min(100, (sumWeightedFPE / target) * 100) : 0;
+    fpeBar.style.width = pct + '%';
+  }
+
+  function currency(n){
+    return '$' + Number(n||0).toLocaleString();
+  }
+  function escapeHTML(s){
+    return (s+'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  addPeriodBtn.addEventListener('click', ()=>{
+    periods.push({ id: uid(), name: 'New Period', months: 3, fullPay: 0, aidCount: 0, aidPct: 50, hs1: 0, hs2: 0 });
+    render();
+  });
+  resetBtn.addEventListener('click', ()=>{
+    periods = [
+      { id: uid(), name: 'Oct 1 → Dec 31', months: 4, fullPay: 10, aidCount: 1, aidPct: 60, hs1: 1, hs2: 0 },
+      { id: uid(), name: 'Jan 1 → Mar 31', months: 3, fullPay: 12, aidCount: 1, aidPct: 65, hs1: 2, hs2: 1 },
+      { id: uid(), name: 'Apr 1 → Jun 15', months: 3, fullPay: 14, aidCount: 1, aidPct: 65, hs1: 1, hs2: 2 },
+    ];
+    render();
+  });
+
+  // global inputs re-calc
+  [tuitionFull, hsClass, targetFPE, yearMonths].forEach(el => el.addEventListener('input', update));
+
+  render(); // initial paint
+})();
+</script>
+</body>
+</html>
